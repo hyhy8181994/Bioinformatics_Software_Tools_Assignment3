@@ -64,20 +64,55 @@ rownames(Anthophora_fi) <- c(1:78) #rename the row name to make dataframe look n
 # so Anthophora_fi is the subset data with randomly selected according to their geological locations and species.
 # the data size is downsized to 78
 
-Anthophora_seq <- data.frame(Anthophora_fi$species_names,Anthophora_fi$nucleotides) #extract the species name and nucleotides into new dataframe
-dataframe2fas(Anthophora_seq, file = "Anho.fasta") #convert seqences to fastafile by dataframe2fas function from seqRFLP package to working directory 
-#the output fasta file is used for blast for quailty check, the quality is acceptable
+######Adi Edit######
+#made anthophora nucleotides into DNAStringSet variable to be able to run downstream
+Anthophora_fi$nucleotides <- DNAStringSet(Anthophora_fi$nucleotides)
 
-Anthophora_set <- readDNAStringSet("Anho.fasta", format = "fasta") #load genterated fasta file to string set format
+###
+#####ADI EDIT#####
+#for the next couple lines, I changed the variables used 
+Anthophora_msa <- DNAStringSet(muscle::muscle(Anthophora_fi$nucleotides, maxiters = 5)) # perform multiple sequence alignment by using muscle algroithm
 
-Anthophora_msa <- DNAStringSet(muscle::muscle(Anthophora_set, maxiters = 5)) # perform multiple sequence alignment by using muscle algroithm
+names(Anthophora_msa) <- Anthophora_fi$process_id
 Anthophora_msa
 
+
+##
+#####ADI EDIT######
+#Adi: Before, the msa was used to make a distance matrix which was used to make the tree. That method assumes that the data had also been properly clustered. So I used clustering and then built the tree. 
 Anthophora_bin <- as.DNAbin(Anthophora_msa) #transfer to DNAbin format 
 dis_Antho<-dist.dna(Anthophora_bin, model = "TN93", as.matrix = T, pairwise.deletion = F) #calculate distance matrix by using TN93 model
-phylo_Antho<-bionj(dis_Antho) #consturct tree by improved version of neighbour joining algorithm from ape package
-parsimony(phylo_Antho,as.phyDat(Anthophora_bin)) #use Maximum parsimony phylogenies to reconstruct the phylogeny tree
-tree<-optim.parsimony(phylo_Antho,as.phyDat(Anthophora_bin))
+
+Antho.cluster <- IdClusters(dis_Antho, method = "NJ", cutoff = 0.04, showPlot = T, type = "both", verbose = T)
+
+#Adi: I added and named a column. 
+Antho.cluster[[1]]$process_id <- Anthophora_fi$process_id
+
+
+#Adi: I then randomized the clusters 
+Ran.Antho <- Antho.cluster[[1]][sample(nrow(Antho.cluster[[1]])),] 
+
+#Adi: I merged the cluster data frame with the other data frame in order to have the other metadata available
+OTU.Antho <- merge(Ran.Antho, Anthophora_fi, by ="process_id",  x.all=TRUE)
+
+
+#Adi: this is run to pick only one sequence per cluster
+OTU.Antho = OTU.Antho[!duplicated((OTU.Antho$cluster)),]
+
+#Adi: this step has to be done in order to work with another package, it is not as efficient but it is necessary 
+tree.seq <- data.frame(OTU.Antho$species_names, OTU.Antho$nucleotides)
+dataframe2fas(tree.seq, file = "Antho_tree.fasta")
+tree.final <- readDNAStringSet("Antho_tree.fasta", format = "fasta")
+
+#Adi: I realigned the sequences for this data frame
+tree.msa <- DNAStringSet(muscle::muscle(tree.final, maxiters = 5, diags = TRUE))
+dis.tree <- dist.dna(as.DNAbin(tree.msa), model = "TN93", as.matrix = T, pairwise.deletion = F)
+
+
+#Adi: I just changed the variables so that the program runs
+phylo_Antho<-bionj(dis.tree) #consturct tree by improved version of neighbour joining algorithm from ape package
+parsimony(phylo_Antho,as.phyDat(as.DNAbin(tree.msa))) #use Maximum parsimony phylogenies to reconstruct the phylogeny tree
+tree<-optim.parsimony(phylo_Antho,as.phyDat(as.DNAbin(tree.msa)))
 plot(tree,cex =0.6) # simple visualisation of tree
 #There are three main clusters formed in phylogenetic tree, but Maximum parsimony phylogenies method tend to increase the divergence.
 
@@ -86,15 +121,16 @@ plot(tree,cex =0.6) # simple visualisation of tree
 #I use phytools package to create a phylogenetic tree along with geological information 
 #I try to use tree produced from Maximum parsimony phylogenies to produce the map, but it failed. So I use UPGMA clustering which is used in the function demonstration to build the tree rather than neighour joining.
 
-tree_1<-untangle(upgma(dis_Antho),"read.tree")#upgma clustering from phangorn package
-Antho_lon_lat <- as.matrix(data.frame(Anthophora_fi$lat, Anthophora_fi$lon)) # construct coordinates matrix for map building
+tree_1<-untangle(upgma(dis.tree),"read.tree")#upgma clustering from phangorn package
+Antho_lon_lat <- as.matrix(data.frame(OTU.Antho$lat, OTU.Antho$lon)) # construct coordinates matrix for map building
 row.names(Antho_lon_lat) <- tree_1$tip.label  #row names should be the same as tree$tip.label
 
  
 #the tree is bit different from the tree constructed by Maximum parsimony phylogenies and it group few species into the wrong group
 mapplot <- phylo.to.map(tree_1, Antho_lon_lat,plot=F)
 
-plot(mapplot,fsize=0.01,asp=1.2,type="phylogram",ftype="i") # the phylogenetic tree plot along with geological information
+plot(mapplot,fsize=0.02,asp=1.2, type = "phylogram", ftype="i") # the phylogenetic tree plot along with geological information
 
+#
 #Even though, the clustering is bit sketchy, but it is very clear that every sister species from each group are point to the similar area. Although I can not conclude they are in the same place, at least they look very close in the word map.
 #And another noteworthy thing is that the majority of the species are collect in central Europe, and rest of them were collected from North America. Geologically speaking, The sample collection lack diversity 
